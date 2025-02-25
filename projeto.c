@@ -1,0 +1,1050 @@
+/**********************************
+* INCLUDES
+**********************************/
+// Bibliotecas padrão
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+
+// Hardware Pico
+#include "pico/stdlib.h"
+#include "hardware/adc.h"
+#include "hardware/pwm.h"
+#include "pico/bootrom.h"
+
+// Periféricos
+#include "lib/ssd1306.h"
+#include "lib/neopixel.h"
+
+/**********************************
+* DEFINES E CONFIGURAÇÕES
+**********************************/
+// Display OLED
+#define TAMANHO_FONTE 8
+#define MARGEM 4
+
+// LEDs RGB
+#define RED_PIN 13
+#define GREEN_PIN 11
+#define BLUE_PIN 12
+
+// Botões
+#define BUTTON_A 5
+#define BUTTON_B 6
+#define BUTTON_JOYSTICK 22
+
+// Joystick
+#define VRX_PIN 27
+#define VRY_PIN 26
+#define ADC_MAX 4095
+#define CENTRO 2047
+#define DEADZONE 250
+#define MEIO 0
+#define CIMA 1
+#define DIREITA 1
+#define BAIXO -1
+#define ESQUERDA -1
+
+//Programa Principal
+#define TEMPO_TROCA_MENSAGEM 3000 // 3 segundos
+
+
+// Configurações do programa
+#define NUM_PLANTAS 5
+#define FOLHAS_POR_PLANTA 5
+#define CUSTO_POR_FUNGICIDA 10
+#define ERRO_DETECCAO 0.2
+
+/**********************************
+* TIPOS DE DADOS
+**********************************/
+typedef struct {
+    float R;    // Reflectância no vermelho
+    float G;    // Reflectância no verde
+    float B;    // Reflectância no azul
+    float NIR;  // Reflectância no infravermelho
+} Reflectancia;
+
+typedef enum {
+    MODO_ESCANEAMENTO,
+    ANALISE
+} EstadoEscaneamento;
+
+typedef enum {
+    ESTADO_MENU,
+    ESTADO_SELECIONAR_FOLHA,
+    ESTADO_ANALISAR,
+    ESTADO_ESCANEAMENTO,
+} Estado;
+
+typedef struct {
+    Reflectancia reflectancia;
+    float ndvi, gndvi;
+    bool visivel;
+    bool infectada;
+} EstadoFolha;
+
+typedef struct {
+    int id;
+    EstadoFolha folhas[FOLHAS_POR_PLANTA];
+    bool infectada;
+    bool tratada;
+} Planta;
+
+int planta_cafe[5][5] = {
+    {1, 20, 20, 0, 0},  
+    {10, 0, 20, 0, 0},   
+    {0, 0, 20, 2, 3},    
+    {5, 4, 20, 0, 10},   
+    {10, 0, 20, 0, 0}    
+};
+
+/**********************************
+* VARIÁVEIS GLOBAIS
+**********************************/
+// Controle do display
+static ssd1306_t ssd;
+
+// Estados dos botões
+volatile bool buttonA_flag = false;
+volatile bool buttonB_flag = false;
+volatile bool buttonJoyStick_flag = false;
+
+// Debounce
+static volatile uint32_t last_time_button_a = 0;
+static volatile uint32_t last_time_button_b = 0;
+static volatile uint32_t last_time_button_joystick = 0;
+
+// Joystick
+int16_t vrx_valor;
+int16_t vry_valor;
+
+// Estado do sistema
+EstadoEscaneamento estado_escaneamento = MODO_ESCANEAMENTO;
+Reflectancia valores_ajustados;
+
+/**********************************
+* PROTÓTIPOS DE FUNÇÕES
+**********************************/
+// Configuração inicial
+void setup();
+void display_init();
+
+// Controle de hardware
+void ler_joystick();
+void normalizar_joystick();
+
+// Interrupções
+static void gpio_button_a_handler(uint gpio, uint32_t events);
+static void gpio_button_b_handler(uint gpio, uint32_t events);
+static void gpio_button_joystick_handler(uint gpio, uint32_t events);
+static void gpio_button_handler(uint gpio, uint32_t events);
+void configurar_interrupcoes_botoes(bool a, bool b, bool joy);
+
+// Interface gráfica
+void exibir_grafico_display(Reflectancia r);
+void exibir_resultado_analise(bool resultado, float R , float G, float B, float NIR, float ndvi, float gndvi);
+void exibir_resultado_analise_folha(EstadoFolha folha);
+void animacao_analise(int duracao_ms);
+void exibir_grafico_matriz(Reflectancia r);
+
+// Lógica do programa
+bool detectar_doenca(float R, float G, float B, float NIR);
+bool detectar_doenca_folha(EstadoFolha folha); 
+void simular_escaneamento();
+Planta gerar_planta(int id);
+bool analisar_folha(Planta p, int folha);
+void tratar_planta(Planta *p);
+void exibe_planta(Planta p, int folha);
+void teste_deteccao();
+void exibir_menu_planta(int num);
+void exibir_menu_folha(int num);
+void gerenciar_menu_principal(int *planta_atual, bool *atualiza_matriz);
+void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_matriz);
+void atualizar_led_status(bool infectado, bool desliga);
+
+int main() {
+    setup();
+    Planta plantas[NUM_PLANTAS];
+    Estado estado = ESTADO_MENU;
+    int planta_atual = 0, folha_atual = 0;
+    bool atualiza_matriz = true;
+
+    // Inicialização das plantas
+    for(int i = 0; i < NUM_PLANTAS; i++) {
+        plantas[i] = gerar_planta(i);
+    }
+
+    while(true) {
+        ler_joystick();
+        normalizar_joystick();
+
+        switch(estado) {
+            case ESTADO_MENU:
+                gerenciar_menu_principal(&planta_atual, &atualiza_matriz);
+                
+                if(buttonB_flag) {
+                    estado = ESTADO_SELECIONAR_FOLHA;
+                    folha_atual = 0;
+                    configurar_interrupcoes_botoes(true, true, false);
+                    buttonB_flag = false;
+                }
+                
+                if(buttonJoyStick_flag) {
+                    estado = ESTADO_ESCANEAMENTO;
+                    buttonJoyStick_flag = false;
+                }
+                
+                if(atualiza_matriz) {
+                    exibe_planta(plantas[planta_atual], -1);
+                    exibir_menu_planta(planta_atual + 1);
+                    atualizar_led_status(plantas[planta_atual].infectada, false);
+                    atualiza_matriz = false;
+                }
+                break;
+
+            case ESTADO_SELECIONAR_FOLHA:
+                gerenciar_selecao_folha(&folha_atual, &atualiza_matriz);
+                
+                if(buttonB_flag) {
+                    estado = ESTADO_ANALISAR;
+                    buttonB_flag = false;
+                }
+                
+                if(buttonA_flag) {
+                    estado = ESTADO_MENU;
+                    configurar_interrupcoes_botoes(true, true, true);
+                    buttonA_flag = false;
+                    atualiza_matriz = true;
+                }
+                
+                if(atualiza_matriz) {
+                    exibe_planta(plantas[planta_atual], folha_atual + 1);
+                    exibir_menu_folha(folha_atual + 1);
+                    atualiza_matriz = false;
+                }
+                break;
+
+            case ESTADO_ANALISAR:
+                exibir_resultado_analise_folha(plantas[planta_atual].folhas[folha_atual]);
+                bool resultado = detectar_doenca_folha(plantas[planta_atual].folhas[folha_atual]);
+                if(resultado) plantas[planta_atual].infectada = true;
+                estado = ESTADO_SELECIONAR_FOLHA;
+                break;
+
+            case ESTADO_ESCANEAMENTO:
+                simular_escaneamento();
+                estado = ESTADO_MENU;
+                atualiza_matriz = true;
+                break;
+        }
+        
+        sleep_ms(100);
+    }
+}
+
+void gerenciar_menu_principal(int *planta_atual, bool *atualiza_matriz) {
+    if(vrx_valor == DIREITA) {
+        *planta_atual = (*planta_atual + 1) % NUM_PLANTAS;
+        *atualiza_matriz = true;
+    }
+    else if(vrx_valor == ESQUERDA) {
+        *planta_atual = (*planta_atual - 1 + NUM_PLANTAS) % NUM_PLANTAS;
+        *atualiza_matriz = true;
+    }
+}
+
+void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_matriz) {
+    if(vrx_valor == DIREITA) {
+        *folha_atual = (*folha_atual + 1) % FOLHAS_POR_PLANTA;
+        *atualiza_matriz = true;
+    }
+    else if(vrx_valor == ESQUERDA) {
+        *folha_atual = (*folha_atual - 1 + FOLHAS_POR_PLANTA) % FOLHAS_POR_PLANTA;
+        *atualiza_matriz = true;
+    }
+}
+
+
+void atualizar_led_status(bool infectado, bool desliga) {
+    if(!desliga){
+        gpio_put(RED_PIN, infectado);
+        gpio_put(GREEN_PIN, !infectado);
+        gpio_put(BLUE_PIN, false);
+    }
+    else{
+        gpio_put(RED_PIN, false);
+        gpio_put(GREEN_PIN, false);
+        gpio_put(BLUE_PIN, false);
+    }
+}
+
+// Função para criar uma planta com infecção aleatória
+// Função para criar uma planta com id e configurar suas folhas
+// Função para gerar uma nova planta
+Planta gerar_planta(int id) {
+    Planta p;
+    p.id = id;
+    p.infectada = false;
+    p.tratada = false;
+
+    for (int i = 0; i < FOLHAS_POR_PLANTA; i++) {
+        // Gerar valores aleatórios de reflectância
+        float R = (rand() % 40 + 30) / 100.0f;
+        float G = (rand() % 40 + 30) / 100.0f;
+        float B = (rand() % 40 + 20) / 100.0f;
+        float NIR = (rand() % 40 + 50) / 100.0f;
+
+        bool doente = detectar_doenca(R, G, B, NIR);
+        bool visivel_doente = (R > 0.65f) && (G < 0.55f);  // Critério de visibilidade
+
+        // Calcula índices NDVI e GNDVI
+        float ndvi = (NIR - R) / (NIR + R + 0.001f);
+        float gndvi = (NIR - G) / (NIR + G + 0.001f);
+
+        p.folhas[i] = (EstadoFolha) {
+            .reflectancia = {R, G, B, NIR},
+            .ndvi = ndvi,
+            .gndvi = gndvi,
+            .visivel = visivel_doente,
+            .infectada = doente
+        };
+
+        // Se houver uma folha visivelmente doente, a planta toda é marcada como infectada
+        if (visivel_doente) {
+            p.infectada = true;
+        }
+    }
+
+    return p;
+}
+
+bool analisar_folha(Planta p, int folha) {
+    EstadoFolha estado_folha = p.folhas[folha];
+
+    if (estado_folha.visivel) {
+        // Se a folha tem infecção visível, sempre será detectada como infectada
+        return true;
+    } 
+    else {
+        Reflectancia relectancia = estado_folha.reflectancia;
+        return detectar_doenca(relectancia.R, relectancia.G, relectancia.B, relectancia.NIR);
+    }
+}
+
+// Função para tratar a planta
+void tratar_planta(Planta *p) {
+    for (int i = 0; i < FOLHAS_POR_PLANTA; i++) {
+        // Define valores saudáveis
+        p->folhas[i] = (EstadoFolha) {
+            .reflectancia = {0.40f, 0.70f, 0.50f, 0.95f},
+            .ndvi = (0.95f - 0.40f) / (0.95f + 0.40f + 0.001f),
+            .gndvi = (0.95f - 0.70f) / (0.95f + 0.70f + 0.001f),
+            .visivel = false,
+            .infectada = false
+        };
+    }
+    p->infectada = false;
+    p->tratada = true;
+}
+
+void exibe_planta(Planta p, int folha) {
+    // Cores pré-definidas (const para otimização)
+    static const uint8_t MARROM_VINHO[3] = {5, 0, 0};
+    static const uint8_t VERDE_FRACO[3]  = {0, 100, 0};
+    static const uint8_t VERDE_FORTE[3]  = {0, 5, 0};
+    static const uint8_t LARANJA_FRACO[3] = {100, 100, 0};
+    static const uint8_t LARANJA_FORTE[3] = {5, 5, 0};
+
+    for(int y = 0; y < 5; y++) {      // Linhas lógicas (0-4)
+        for(int x = 0; x < 5; x++) {  // Colunas lógicas (0-4)
+            int valor = planta_cafe[y][x]; // Note: invertemos x e y aqui
+            int index = getIndex(x, 4 - y); // Inverte a ordem das linhas
+
+            if(valor >= 1 && valor <= FOLHAS_POR_PLANTA) { 
+                int folha_atual = valor;
+
+                if(folha_atual == folha) { // Selecionada
+                    if(p.folhas[folha_atual-1].visivel) {
+                        npSetLED(index, LARANJA_FORTE[0], LARANJA_FORTE[1], LARANJA_FORTE[2]);
+                    } else {
+                        npSetLED(index, VERDE_FORTE[0], VERDE_FORTE[1], VERDE_FORTE[2]);
+                    }
+                } else { // Não selecionada
+                    if(p.folhas[folha_atual-1].visivel) {
+                        npSetLED(index, LARANJA_FRACO[0], LARANJA_FRACO[1], LARANJA_FRACO[2]);
+                    } else {
+                        npSetLED(index, VERDE_FRACO[0], VERDE_FRACO[1], VERDE_FRACO[2]);
+                    }
+                }
+            } 
+            else if(valor == 10) {
+                npSetLED(index, MARROM_VINHO[0], MARROM_VINHO[1], MARROM_VINHO[2]);
+            }
+            else if(valor == 20){
+                npSetLED(index, VERDE_FRACO[0], VERDE_FRACO[1], VERDE_FRACO[2]);
+            }
+            else {
+                npSetLED(index, 0, 0, 0);
+            }
+        }
+    }
+    npWrite();
+}
+
+// Escreve diretamente no display com controle preciso
+void escrever_linha(const char* texto, int linha, int coluna, bool centralizado) {
+    int pos_x = coluna * TAMANHO_FONTE;
+    int pos_y = linha * 10; // 10px por linha
+    
+    if(centralizado) {
+        int len = strlen(texto);
+        pos_x = (128 - (len * TAMANHO_FONTE)) / 2;
+    }
+    
+    ssd1306_draw_string(&ssd, texto, pos_x, pos_y);
+    ssd1306_send_data(&ssd);
+}
+
+// Função para exibir menu de plantas
+void exibir_menu_planta(int num) {
+    static uint8_t mensagem_atual = 0;
+    static uint32_t ultima_troca = 0;
+    char buffer[30];
+    
+    // Limpa display
+    ssd1306_fill(&ssd, false);
+
+    // ----- CABEÇALHO -----
+    // Seta esquerda
+   
+    escrever_linha("<", 0, 0, false);
+    
+    
+    // Título + contador
+    snprintf(buffer, sizeof(buffer), "%s %d/%d", 
+           "PLANTA:", num, 5);
+    escrever_linha(buffer, 0, 0, true); // Centralizado
+
+    // Seta direita
+    escrever_linha(">", 0, 15, false); // Coluna 15 (128 - 8px)
+    
+
+    // ----- MENSAGENS -----
+    uint32_t agora = to_ms_since_boot(get_absolute_time());
+    if((agora - ultima_troca > 3000)) {
+        mensagem_atual = (mensagem_atual + 1) % 4;
+        ultima_troca = agora;
+    }
+    
+    switch (mensagem_atual)
+    {
+    case 0:
+        escrever_linha("MOVA O", 3, 0, true);    
+        escrever_linha("JOYSTICK < >", 4, 0, true);       
+        break;
+    case 1:
+        escrever_linha("APERTE B", 3, 0, true);    
+        escrever_linha("p/ SELECIONAR", 4, 0, true);  
+        break;
+    case 2:
+        escrever_linha("APERTE A", 3, 0, true);    
+        escrever_linha("p/ PULVERIZAR", 4, 0, true);
+        break;
+    case 3:
+        escrever_linha("APERTE JOY", 3, 0, true);    
+        escrever_linha("p/ ESCANEAR", 4, 0, true);
+        break;
+    }
+
+    ssd1306_send_data(&ssd);
+}
+
+// Função para exibir menu de folhas
+void exibir_menu_folha(int num) {
+    static uint8_t mensagem_atual = 0;
+    static uint32_t ultima_troca = 0;
+    char buffer[30];
+    
+    // Limpa display
+    ssd1306_fill(&ssd, false);
+
+    // ----- CABEÇALHO -----
+    // Seta esquerda
+   
+    escrever_linha("<", 0, 0, false);
+    
+    
+    // Título + contador
+    snprintf(buffer, sizeof(buffer), "%s %d/%d", 
+           "FOLHA:", num, 5);
+    escrever_linha(buffer, 0, 0, true); // Centralizado
+
+    // Seta direita
+    escrever_linha(">", 0, 15, false); // Coluna 15 (128 - 8px)
+    
+
+    // ----- MENSAGENS -----
+    uint32_t agora = to_ms_since_boot(get_absolute_time());
+    if((agora - ultima_troca > 3000)) {
+        mensagem_atual = (mensagem_atual + 1) % 3;
+        ultima_troca = agora;
+    }
+    
+    switch (mensagem_atual)
+    {
+    case 0:
+        escrever_linha("MOVA O", 3, 0, true);    
+        escrever_linha("JOYSTICK < >", 4, 0, true);       
+        break;
+    case 1:
+        escrever_linha("APERTE B", 3, 0, true);    
+        escrever_linha("p/ ANALISAR", 4, 0, true);  
+        break;
+    case 2:
+        escrever_linha("APERTE A", 3, 0, true);    
+        escrever_linha("p/ VOLTAR", 4, 0, true);
+        break;
+    }
+    ssd1306_send_data(&ssd);
+}
+
+uint16_t aplicar_deadzone(uint16_t valor_adc) {
+    if (valor_adc >= (CENTRO - DEADZONE) && valor_adc <= (CENTRO + DEADZONE)) {
+        return CENTRO;  // Define o valor como centro se estiver dentro da zona morta
+    }
+    return valor_adc;  // Retorna o valor original se estiver fora da zona morta
+}
+
+void ler_joystick(){
+     // Leitura dos valores dos eixos do joystick
+     adc_select_input(1); // Seleciona o canal para o eixo X
+     vrx_valor = adc_read();
+     vrx_valor = aplicar_deadzone(vrx_valor);  // Aplica deadzone no eixo X
+
+     adc_select_input(0); // Seleciona o canal para o eixo Y
+     vry_valor = adc_read();
+     vry_valor = aplicar_deadzone(vry_valor);  // Aplica deadzone no eixo Y
+}
+
+int8_t normalizar_direcao(uint16_t valor_adc) {
+    if (valor_adc > CENTRO + DEADZONE) {
+        return DIREITA;  // Ou CIMA, dependendo do eixo
+    } else if (valor_adc < CENTRO - DEADZONE) {
+        return ESQUERDA; // Ou BAIXO, dependendo do eixo
+    }
+    return MEIO; // Joystick centralizado
+}
+
+void normalizar_joystick() {
+    vrx_valor = normalizar_direcao(vrx_valor);  // Esquerda (-1), Centro (0), Direita (1)
+    vry_valor = normalizar_direcao(vry_valor);  // Baixo (-1), Centro (0), Cima (1)
+}
+
+void setup(){
+
+    stdio_init_all();
+
+    // Inicialização de sistemas básicos
+    stdio_init_all(); // USB, stdio
+        
+    npInit(LED_PIN);  // Iniacializa NeoPixels
+
+    display_init();    // Configura display OLED
+
+    adc_init();
+    adc_gpio_init(VRX_PIN);
+    adc_gpio_init(VRY_PIN);
+
+    // Configura GPIOs dos LEDs
+    gpio_init(GREEN_PIN);              
+    gpio_set_dir(GREEN_PIN, GPIO_OUT); 
+    gpio_put(GREEN_PIN, false); // Estado inicial desligado
+
+    gpio_init(RED_PIN);              
+    gpio_set_dir(RED_PIN, GPIO_OUT); 
+    gpio_put(RED_PIN, false); // Estado inicial desligado
+
+    gpio_init(BLUE_PIN);              
+    gpio_set_dir(BLUE_PIN, GPIO_OUT); 
+    gpio_put(BLUE_PIN, false); // Estado inicial desligado
+
+    // Configuração dos botões com pull-up
+    gpio_init(BUTTON_A);
+    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_pull_up(BUTTON_A);
+
+    gpio_init(BUTTON_B);
+    gpio_set_dir(BUTTON_B, GPIO_IN);
+    gpio_pull_up(BUTTON_B);
+
+    gpio_init(BUTTON_JOYSTICK);
+    gpio_set_dir(BUTTON_JOYSTICK, GPIO_IN);
+    gpio_pull_up(BUTTON_JOYSTICK);
+
+     // Configura interrupções para borda de descida (botão pressionado)
+     gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &gpio_button_handler);
+     gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL, true, &gpio_button_handler);
+     gpio_set_irq_enabled_with_callback(BUTTON_JOYSTICK, GPIO_IRQ_EDGE_FALL, true, &gpio_button_handler);
+}
+
+// Inicialização do display OLED
+void display_init() {
+    // Configuração I2C a 400kHz
+    i2c_init(I2C_PORT, 400 * 1000);
+    
+    // Configura pinos I2C
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA); // Ativa pull-ups internos
+    gpio_pull_up(I2C_SCL);
+
+    // Inicialização do controlador SSD1306
+    ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT);
+    ssd1306_config(&ssd);
+    ssd1306_send_data(&ssd);
+
+    // Limpa a tela inicialmente
+    ssd1306_fill(&ssd, false);
+    ssd1306_send_data(&ssd);
+}
+
+
+void configurar_interrupcoes_botoes(bool a, bool b, bool joy) {
+    gpio_set_irq_enabled(BUTTON_A, GPIO_IRQ_EDGE_FALL, a);
+    gpio_set_irq_enabled(BUTTON_B, GPIO_IRQ_EDGE_FALL, b);
+    gpio_set_irq_enabled(BUTTON_JOYSTICK, GPIO_IRQ_EDGE_FALL, joy);
+}
+// Tratador central de interrupções de botões
+static void gpio_button_handler(uint gpio, uint32_t events) {
+    switch(gpio) {
+        case BUTTON_A:
+            gpio_button_a_handler(gpio, events);
+            break;
+        case BUTTON_B:
+            gpio_button_b_handler(gpio, events);
+            break;
+        case BUTTON_JOYSTICK:
+            gpio_button_joystick_handler(gpio, events);
+            break;
+    }
+}
+
+// Tratador do botão A
+static void gpio_button_a_handler(uint gpio, uint32_t events) {
+    uint32_t current_time = to_us_since_boot(get_absolute_time());
+    
+    // Debounce: verifica se passaram pelo menos 200ms desde o último acionamento
+    if (current_time - last_time_button_a > 200000) {
+        last_time_button_a = current_time;
+
+        buttonA_flag = true;
+    }
+}
+
+// Tratador do botão B
+static void gpio_button_b_handler(uint gpio, uint32_t events) {
+    uint32_t current_time = to_us_since_boot(get_absolute_time());
+    
+    // Debounce: verifica se passaram pelo menos 200ms desde o último acionamento
+    if (current_time - last_time_button_b > 200000) {
+        last_time_button_b = current_time;
+
+        buttonB_flag = true;
+    }
+}
+
+
+// Tratador do botão do joystick
+static void gpio_button_joystick_handler(uint gpio, uint32_t events) {
+    uint32_t current_time = to_us_since_boot(get_absolute_time());
+    
+    // Debounce: verifica se passaram pelo menos 200ms desde o último acionamento
+    if (current_time - last_time_button_joystick > 200000) {
+        last_time_button_joystick = current_time;
+
+        buttonJoyStick_flag = true;
+    }
+}
+
+// Função modificada para controle por etapas
+void simular_escaneamento() {
+    uint8_t etapa = 2; // 0 = R/NIR, 1 = G/B, 2 = não faz nenhuma leitura
+    estado_escaneamento = MODO_ESCANEAMENTO;
+
+    bool animacao_concluida = false;
+    bool mudou_o_valor = true;
+
+    printf("ESTADO B: %d\n", buttonB_flag);
+
+    while (true){
+        if(estado_escaneamento == MODO_ESCANEAMENTO){
+
+            // Ajusta V e NIR
+            if(etapa == 0){
+                ler_joystick();
+
+                valores_ajustados.R = vry_valor / (float)ADC_MAX;
+                valores_ajustados.NIR = vrx_valor / (float)ADC_MAX;
+                
+                mudou_o_valor = true;
+            }
+            // Ajusta G e B
+            else if(etapa == 1) {
+                ler_joystick();
+
+                valores_ajustados.G = vry_valor / (float)ADC_MAX;
+                valores_ajustados.B = vrx_valor / (float)ADC_MAX;
+                
+                mudou_o_valor = true;
+            }
+            
+            if(buttonA_flag) {
+                etapa = (etapa + 1) % 3;
+                buttonA_flag = false;
+            }
+            
+
+            if(buttonB_flag) {
+                animacao_concluida = false;
+                estado_escaneamento = ANALISE;
+                configurar_interrupcoes_botoes(true, false, true);
+                buttonB_flag = false;
+            }
+
+
+            printf("R: %.2f\n",  valores_ajustados.R);
+            printf("NIR: %.2f\n",  valores_ajustados.NIR);
+            printf("G: %.2f\n",  valores_ajustados.G);
+            printf("B: %.2f\n",  valores_ajustados.B);
+            printf("ETAPA: %d\n", etapa);
+
+            //atualiza matriz e display
+            if(mudou_o_valor){
+                exibir_grafico_display(valores_ajustados);
+                exibir_grafico_matriz(valores_ajustados);
+                mudou_o_valor = false;
+            }
+
+        }
+
+        else if(estado_escaneamento == ANALISE){
+            
+
+            if(!animacao_concluida){
+                
+                bool resultado = detectar_doenca(valores_ajustados.R,
+                                                valores_ajustados.G,
+                                                valores_ajustados.B,
+                                                valores_ajustados.NIR);
+                animacao_analise(500);
+                float ndvi = (valores_ajustados.NIR - valores_ajustados.R) / (valores_ajustados.NIR + valores_ajustados.R + 0.001f);
+                float gndvi = (valores_ajustados.NIR - valores_ajustados.G) / (valores_ajustados.NIR + valores_ajustados.G + 0.001f);
+                
+                exibir_resultado_analise(resultado,valores_ajustados.R,
+                                        valores_ajustados.G,
+                                        valores_ajustados.B,
+                                        valores_ajustados.NIR,
+                                        ndvi,
+                                        gndvi
+                                         );
+
+                sleep_ms(5000);
+               //teste_deteccao();
+               animacao_concluida = true;
+               buttonA_flag = true;
+            }
+
+
+            if(buttonA_flag) {
+                mudou_o_valor = true;
+                estado_escaneamento = MODO_ESCANEAMENTO;
+                etapa = 2;
+                configurar_interrupcoes_botoes(true, true, true);
+                buttonA_flag = false;
+            }
+
+        }
+
+        if(buttonJoyStick_flag){
+            npClear();
+            npWrite();
+            ssd1306_fill(&ssd, false);
+            ssd1306_send_data(&ssd);
+            buttonJoyStick_flag = false;
+            configurar_interrupcoes_botoes(true, true, true);
+            break;
+        }
+    }
+
+}
+
+void exibir_grafico_matriz(Reflectancia r){
+   
+   // Limpa todos os LEDs primeiro
+   npClear();
+
+   // Mapeamento das bandas espectrais para colunas
+   const uint8_t colunas[5] = {0, 1, 2, 3, 4}; // R, G, B, NIR
+   float valores[5] = {r.R, r.G, r.B, r.NIR, r.NIR};
+   
+   // Cores correspondentes para cada banda (R, G, B)
+   const uint8_t cores[5][3] = {
+       {255, 0, 0},    // Vermelho para R
+       {0, 255, 0},    // Verde para G
+       {0, 0, 255},    // Azul para B
+       {255, 255, 255}, // Branco para NIR
+       {255, 255, 255} // Branco para NIR
+   };
+
+   // Para cada banda espectral
+   for(int banda = 0; banda < 5; banda++) {
+       // Calcula a altura da coluna (0-5 LEDs)
+       uint8_t altura = (uint8_t)(valores[banda] * 6);
+       
+       // Determina a coluna atual
+       uint8_t x = colunas[banda];
+       
+       // Acende os LEDs de baixo para cima
+       for(int i = 0; i < altura; i++) {
+           // Calcula a posição Y (0 = base, 4 = topo)
+           uint8_t y = i;
+           
+           // Obtém o índice correto na matriz
+           int index = getIndex(x, y);
+           
+           // Define a cor do LED
+           npSetLED(index, 
+                  cores[banda][0],  // R
+                  cores[banda][1],  // G 
+                  cores[banda][2]); // B
+       }
+   }
+
+   // Atualiza os LEDs físicos
+   npWrite();
+    
+}
+
+void exibir_grafico_display(Reflectancia r) {
+    // Limpa a tela
+    ssd1306_fill(&ssd, false);
+    
+
+    
+    // Define a posição base para as barras (deixando espaço para o título)
+    // Supondo que 'ssd.height' é a altura do display e 'TAMANHO_FONTE' é o tamanho da fonte (ex: 8)
+    uint8_t y_base = ssd.height - MARGEM - TAMANHO_FONTE - 10;  // "10" é um deslocamento extra para separar a barra dos valores
+    
+    // Posições horizontais para as 4 bandas
+    const uint8_t colunas[4] = {MARGEM, 34, 64, 94};
+    const char* rotulos[4] = {"R", "G", "B", "NIR"};
+    
+    // Para cada banda, calcular e desenhar a barra, o valor (em porcentagem) e o rótulo
+    for(uint8_t i = 0; i < 4; i++) {
+        float valor;
+        switch(i) {
+            case 0: valor = r.R; break;
+            case 1: valor = r.G; break;
+            case 2: valor = r.B; break;
+            case 3: valor = r.NIR; break;
+        }
+        
+        // Converte o valor (0.0 a 1.0) para porcentagem (0 a 100)
+        int porcentagem = (int)(valor * 100);
+        
+        // Define a escala: 40 pixels corresponde a valor 1.0 (ou 100%)
+        uint8_t escala = 40;
+        uint8_t altura = (uint8_t)(valor * escala);
+        if (altura > y_base) {
+            altura = y_base;
+        }
+        // Calcula a posição vertical (topo) da barra
+        uint8_t y_top = y_base - altura;
+        
+        // Desenha a barra de reflectância
+        // Parâmetros: top = y_top, left = colunas[i], width = 20, height = altura
+        ssd1306_rect(&ssd, y_top, colunas[i], 20, altura, true, true);
+        
+        // Prepara o valor numérico (em porcentagem)
+        char buffer[8];
+        snprintf(buffer, sizeof(buffer), "%d%%", porcentagem);
+        
+        // Exibe o valor numérico abaixo da barra
+        ssd1306_draw_string(&ssd, buffer, colunas[i], y_base + 2);
+        
+        // Exibe o rótulo da banda ainda mais abaixo
+        ssd1306_draw_string(&ssd, rotulos[i], colunas[i] + 6, y_base + TAMANHO_FONTE + 4);
+    }
+    
+    // Envia os dados para o display
+    ssd1306_send_data(&ssd);
+}
+
+void animacao_analise(int duracao_ms) {
+    const uint8_t centro_x = 64;
+    const uint8_t centro_y = 32;
+    const int total_passos = 50; // Número de quadros da animação
+    const int delay_por_passo = duracao_ms / total_passos;
+    
+    // Animação de carregamento
+    for (int i = 0; i <= total_passos; i++) {
+        ssd1306_fill(&ssd, false);
+        
+        // Exibe o texto "Analisando" acima da barra
+        ssd1306_draw_string(&ssd, "ANALISANDO", 24, 20);
+        
+        // Barra de progresso horizontal: largura máxima agora é 100 pixels
+        uint8_t largura = (i * 100) / total_passos;
+        // Desenha a barra na posição: top = 20, left = 55, com altura de 6 pixels
+        ssd1306_rect(&ssd, 35, 14, largura, 6, true, true);
+
+        
+        ssd1306_send_data(&ssd);
+        sleep_ms(delay_por_passo);
+    }
+}
+
+void exibir_resultado_analise_folha(EstadoFolha folha){
+    float R = folha.reflectancia.R;
+    float G = folha.reflectancia.G;
+    float B = folha.reflectancia.B;
+    float NIR = folha.reflectancia.NIR;
+    float ndvi =  folha.ndvi;
+    float gndvi = folha.gndvi;
+    bool resultado = detectar_doenca(R, G, B, NIR);
+    exibir_resultado_analise(resultado, R, G, B, NIR, ndvi, gndvi);
+}
+void exibir_resultado_analise(bool resultado, float R , float G, float B, float NIR, float ndvi, float gndvi ){
+    char buffer[24];
+    ssd1306_fill(&ssd, false);
+
+    // Linha 1 - Status principal centralizado
+    snprintf(buffer, sizeof(buffer), "%s", resultado ? "%% INFECTADA %%" : "== SAUDAVEL ==");
+    escrever_linha(buffer, 0, 0, true); // Centralizado
+
+    // Linha 2 - Reflectância RGB
+    snprintf(buffer, sizeof(buffer), "R:%.0f%% G:%.0f%%", 
+             R * 100, 
+             G * 100);
+    escrever_linha(buffer, 1, 0, false);
+
+    // Linha 3 - Reflectância B e NIR
+    snprintf(buffer, sizeof(buffer), "B:%.0f%% NIR:%.0f%%", 
+             B * 100, 
+             NIR * 100);
+    escrever_linha(buffer, 2, 0, false);
+
+    // Linha 4 - Índices NDVI e GNDVI
+    snprintf(buffer, sizeof(buffer), "NDVI:%.2f", 
+             ndvi);
+    escrever_linha(buffer, 3, 0, false);
+
+    // Linha 4 - Índices GNDVI
+    snprintf(buffer, sizeof(buffer), "GNDVI:%.2f",  
+             gndvi);
+    escrever_linha(buffer, 4, 0, false);
+
+    // Linha 6 - Diagnóstico
+    /*
+    bool visivel = (R > 0.65f) && (G < 0.55f);
+    const char* diagnostico = visivel ? 
+        "SINTOMAS VISIVEIS" : 
+        "DIAGNOSTICO POR NIR";
+    escrever_linha(diagnostico, 4, 0, true);
+    */
+    ssd1306_send_data(&ssd);
+}
+
+
+bool detectar_doenca_folha(EstadoFolha folha){
+    float R = folha.reflectancia.R;
+    float G = folha.reflectancia.G;
+    float B = folha.reflectancia.B;
+    float NIR = folha.reflectancia.NIR;
+    return detectar_doenca(R, G, B, NIR);
+}
+bool detectar_doenca(float R, float G, float B, float NIR) {
+    // 1. Cálculo dos índices
+    float ndvi = (NIR - R) / (NIR + R + 0.001f);
+    float gndvi = (NIR - G) / (NIR + G + 0.001f);
+    
+    // 2. Limiares científicos
+    const float NDVI_SAUDAVEL = 0.4f;
+    const float GNDVI_SAUDAVEL = 0.35f;
+    const float ERRO = 0.2f;
+
+    // 3. Critérios de detecção
+    bool criterio_ndvi = ndvi < NDVI_SAUDAVEL;
+    bool criterio_gndvi = gndvi < GNDVI_SAUDAVEL;
+    bool criterio_visivel = (R > 0.65f) && (G < 0.55f);
+
+    // 4. Lógica de decisão
+    bool resultado = (criterio_ndvi && criterio_gndvi) || criterio_visivel;
+
+    /* 5. Simulação de erro
+    if((float)rand()/RAND_MAX < ERRO) {
+        return !resultado;
+    }
+    */
+    return resultado;
+}
+
+/*
+void teste_deteccao() {
+
+    bool resultado;
+
+    // Teste 1 (Verdadeiro)
+    resultado = detectar_doenca(0.70f, 0.50f, 0.30f, 0.60f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 2 (Falso)
+    resultado = detectar_doenca(0.40f, 0.70f, 0.50f, 0.95f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 3 (Verdadeiro)
+    resultado = detectar_doenca(0.68f, 0.40f, 0.25f, 0.55f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 4 (Falso)
+    resultado = detectar_doenca(0.50f, 0.60f, 0.40f, 1.20f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 5 (Verdadeiro)
+    resultado = detectar_doenca(0.80f, 0.45f, 0.20f, 0.65f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 6 (Falso)
+    resultado = detectar_doenca(0.30f, 0.70f, 0.50f, 0.85f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 7 (Verdadeiro)
+    resultado = detectar_doenca(0.60f, 0.30f, 0.35f, 0.55f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 8 (Falso)
+    resultado = detectar_doenca(0.40f, 0.58f, 0.35f, 1.0f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 9 (Verdadeiro)
+    resultado = detectar_doenca(0.72f, 0.50f, 0.40f, 0.58f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+    // Teste 10 (Falso)
+    resultado = detectar_doenca(0.35f, 0.50f, 0.40f, 1.0f);
+    exibir_resultado_analise(resultado);
+    sleep_ms(500);
+
+
+}
+*/
