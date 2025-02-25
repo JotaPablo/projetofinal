@@ -5,9 +5,7 @@
 #include <stdint.h>
 #include "pico/stdlib.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+
 
 // Inicializa o buzzer no pino especificado (usando PWM)
 void buzzer_init(uint pin);

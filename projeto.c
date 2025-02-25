@@ -17,6 +17,8 @@
 #include "lib/neopixel.h"
 #include "lib/buzzer.h"
 
+#include "utils/hardware_config.h"
+
 /**********************************
 * DEFINES E CONFIGURAÇÕES
 **********************************/
@@ -24,30 +26,6 @@
 #define TAMANHO_FONTE 8
 #define MARGEM 4
 
-// LEDs RGB
-#define RED_PIN 13
-#define GREEN_PIN 11
-#define BLUE_PIN 12
-
-// Botões
-#define BUTTON_A 5
-#define BUTTON_B 6
-#define BUTTON_JOYSTICK 22
-
-// Buzzer
-#define BUZZER_PIN 10
-
-// Joystick
-#define VRX_PIN 27
-#define VRY_PIN 26
-#define ADC_MAX 4095
-#define CENTRO 2047
-#define DEADZONE 250
-#define MEIO 0
-#define CIMA 1
-#define DIREITA 1
-#define BAIXO -1
-#define ESQUERDA -1
 
 //Programa Principal
 #define TEMPO_TROCA_MENSAGEM 3000 // 3 segundos
@@ -107,21 +85,8 @@ int planta_cafe[5][5] = {
 * VARIÁVEIS GLOBAIS
 **********************************/
 // Controle do display
-static ssd1306_t ssd;
+ssd1306_t display;
 
-// Estados dos botões
-volatile bool buttonA_flag = false;
-volatile bool buttonB_flag = false;
-volatile bool buttonJoyStick_flag = false;
-
-// Debounce
-static volatile uint32_t last_time_button_a = 0;
-static volatile uint32_t last_time_button_b = 0;
-static volatile uint32_t last_time_button_joystick = 0;
-
-// Joystick
-int16_t vrx_valor;
-int16_t vry_valor;
 
 // Estado do sistema
 EstadoEscaneamento estado_escaneamento = MODO_ESCANEAMENTO;
@@ -130,22 +95,9 @@ Reflectancia valores_ajustados;
 /**********************************
 * PROTÓTIPOS DE FUNÇÕES
 **********************************/
-// Configuração inicial
-void setup();
-void display_init();
-
-// Controle de hardware
-void ler_joystick();
-void normalizar_joystick();
-
-// Interrupções
-static void gpio_button_a_handler(uint gpio, uint32_t events);
-static void gpio_button_b_handler(uint gpio, uint32_t events);
-static void gpio_button_joystick_handler(uint gpio, uint32_t events);
-static void gpio_button_handler(uint gpio, uint32_t events);
-void configurar_interrupcoes_botoes(bool a, bool b, bool joy);
 
 // Interface gráfica
+void display_init(ssd1306_t *display);
 void exibir_grafico_display(Reflectancia r);
 void exibir_resultado_analise(bool resultado, float R , float G, float B, float NIR, float ndvi, float gndvi);
 void exibir_resultado_analise_folha(EstadoFolha folha);
@@ -166,10 +118,10 @@ void exibir_menu_planta(int atual, int custo);
 void exibir_menu_folha(int num);
 void gerenciar_menu_principal(int *planta_atual, bool *atualiza_display );
 void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_display );
-void atualizar_led_status(bool infectado, bool desliga);
 
 int main() {
-    setup();
+    hardware_setup();
+    display_init(&display);
     Planta plantas[NUM_PLANTAS];
     Estado estado = ESTADO_MENU;
     int planta_atual = 0, folha_atual = 0;
@@ -185,10 +137,6 @@ int main() {
     plantas[3] = gerar_planta(3, 2); // Infectada sem sintomas
     plantas[4] = gerar_planta(4, 2); // Infectada sem sintomas
     
-     
-     
-     
-
     while(true) {
         ler_joystick();
         normalizar_joystick();
@@ -204,7 +152,7 @@ int main() {
 
                 if(buttonA_flag){
                     configurar_interrupcoes_botoes(false, false, false);
-                    ssd1306_fill(&ssd, false);
+                    ssd1306_fill(&display, false);
                     if(plantas[planta_atual].tratada){
                         buzzer_som_analise_concluida();
                         sleep_ms(100);
@@ -363,20 +311,6 @@ void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_display) {
     }
 }
 
-
-void atualizar_led_status(bool infectado, bool desliga) {
-    if(!desliga){
-        gpio_put(RED_PIN, infectado);
-        gpio_put(GREEN_PIN, !infectado);
-        gpio_put(BLUE_PIN, false);
-    }
-    else{
-        gpio_put(RED_PIN, false);
-        gpio_put(GREEN_PIN, false);
-        gpio_put(BLUE_PIN, false);
-    }
-}
-
 // Função para criar uma planta com infecção aleatória
 // Função para criar uma planta com id e configurar suas folhas
 // Função para gerar uma nova planta
@@ -527,8 +461,8 @@ void escrever_linha(const char* texto, int linha, int coluna, bool centralizado)
         pos_x = (128 - (len * TAMANHO_FONTE)) / 2;
     }
     
-    ssd1306_draw_string(&ssd, texto, pos_x, pos_y);
-    ssd1306_send_data(&ssd);
+    ssd1306_draw_string(&display, texto, pos_x, pos_y);
+    ssd1306_send_data(&display);
 }
 
 // Função para exibir menu de plantas
@@ -538,7 +472,7 @@ void exibir_menu_planta(int atual, int custo) {
     char buffer[30];
     
     // Limpa display
-    ssd1306_fill(&ssd, false);
+    ssd1306_fill(&display, false);
 
     // ----- CABEÇALHO -----
     // Seta esquerda
@@ -586,7 +520,7 @@ void exibir_menu_planta(int atual, int custo) {
         break;
     }
 
-    ssd1306_send_data(&ssd);
+    ssd1306_send_data(&display);
 }
 
 // Função para exibir menu de folhas
@@ -596,7 +530,7 @@ void exibir_menu_folha(int num) {
     char buffer[30];
     
     // Limpa display
-    ssd1306_fill(&ssd, false);
+    ssd1306_fill(&display, false);
 
     // ----- CABEÇALHO -----
     // Seta esquerda
@@ -635,168 +569,9 @@ void exibir_menu_folha(int num) {
         escrever_linha("p/ VOLTAR", 4, 0, true);
         break;
     }
-    ssd1306_send_data(&ssd);
+    ssd1306_send_data(&display);
 }
 
-uint16_t aplicar_deadzone(uint16_t valor_adc) {
-    if (valor_adc >= (CENTRO - DEADZONE) && valor_adc <= (CENTRO + DEADZONE)) {
-        return CENTRO;  // Define o valor como centro se estiver dentro da zona morta
-    }
-    return valor_adc;  // Retorna o valor original se estiver fora da zona morta
-}
-
-void ler_joystick(){
-     // Leitura dos valores dos eixos do joystick
-     adc_select_input(1); // Seleciona o canal para o eixo X
-     vrx_valor = adc_read();
-     vrx_valor = aplicar_deadzone(vrx_valor);  // Aplica deadzone no eixo X
-
-     adc_select_input(0); // Seleciona o canal para o eixo Y
-     vry_valor = adc_read();
-     vry_valor = aplicar_deadzone(vry_valor);  // Aplica deadzone no eixo Y
-}
-
-int8_t normalizar_direcao(uint16_t valor_adc) {
-    if (valor_adc > CENTRO + DEADZONE) {
-        return DIREITA;  // Ou CIMA, dependendo do eixo
-    } else if (valor_adc < CENTRO - DEADZONE) {
-        return ESQUERDA; // Ou BAIXO, dependendo do eixo
-    }
-    return MEIO; // Joystick centralizado
-}
-
-void normalizar_joystick() {
-    vrx_valor = normalizar_direcao(vrx_valor);  // Esquerda (-1), Centro (0), Direita (1)
-    vry_valor = normalizar_direcao(vry_valor);  // Baixo (-1), Centro (0), Cima (1)
-}
-
-void setup(){
-
-    stdio_init_all();
-
-    // Inicialização de sistemas básicos
-    stdio_init_all(); // USB, stdio
-        
-    npInit(LED_PIN);  // Iniacializa NeoPixels
-
-    display_init();    // Configura display OLED
-
-    buzzer_init(BUZZER_PIN);
-
-    adc_init();
-    adc_gpio_init(VRX_PIN);
-    adc_gpio_init(VRY_PIN);
-
-    // Configura GPIOs dos LEDs
-    gpio_init(GREEN_PIN);              
-    gpio_set_dir(GREEN_PIN, GPIO_OUT); 
-    gpio_put(GREEN_PIN, false); // Estado inicial desligado
-
-    gpio_init(RED_PIN);              
-    gpio_set_dir(RED_PIN, GPIO_OUT); 
-    gpio_put(RED_PIN, false); // Estado inicial desligado
-
-    gpio_init(BLUE_PIN);              
-    gpio_set_dir(BLUE_PIN, GPIO_OUT); 
-    gpio_put(BLUE_PIN, false); // Estado inicial desligado
-
-    // Configuração dos botões com pull-up
-    gpio_init(BUTTON_A);
-    gpio_set_dir(BUTTON_A, GPIO_IN);
-    gpio_pull_up(BUTTON_A);
-
-    gpio_init(BUTTON_B);
-    gpio_set_dir(BUTTON_B, GPIO_IN);
-    gpio_pull_up(BUTTON_B);
-
-    gpio_init(BUTTON_JOYSTICK);
-    gpio_set_dir(BUTTON_JOYSTICK, GPIO_IN);
-    gpio_pull_up(BUTTON_JOYSTICK);
-
-     // Configura interrupções para borda de descida (botão pressionado)
-     gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &gpio_button_handler);
-     gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL, true, &gpio_button_handler);
-     gpio_set_irq_enabled_with_callback(BUTTON_JOYSTICK, GPIO_IRQ_EDGE_FALL, true, &gpio_button_handler);
-}
-
-// Inicialização do display OLED
-void display_init() {
-    // Configuração I2C a 400kHz
-    i2c_init(I2C_PORT, 400 * 1000);
-    
-    // Configura pinos I2C
-    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(I2C_SDA); // Ativa pull-ups internos
-    gpio_pull_up(I2C_SCL);
-
-    // Inicialização do controlador SSD1306
-    ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT);
-    ssd1306_config(&ssd);
-    ssd1306_send_data(&ssd);
-
-    // Limpa a tela inicialmente
-    ssd1306_fill(&ssd, false);
-    ssd1306_send_data(&ssd);
-}
-
-
-void configurar_interrupcoes_botoes(bool a, bool b, bool joy) {
-    gpio_set_irq_enabled(BUTTON_A, GPIO_IRQ_EDGE_FALL, a);
-    gpio_set_irq_enabled(BUTTON_B, GPIO_IRQ_EDGE_FALL, b);
-    gpio_set_irq_enabled(BUTTON_JOYSTICK, GPIO_IRQ_EDGE_FALL, joy);
-}
-// Tratador central de interrupções de botões
-static void gpio_button_handler(uint gpio, uint32_t events) {
-    switch(gpio) {
-        case BUTTON_A:
-            gpio_button_a_handler(gpio, events);
-            break;
-        case BUTTON_B:
-            gpio_button_b_handler(gpio, events);
-            break;
-        case BUTTON_JOYSTICK:
-            gpio_button_joystick_handler(gpio, events);
-            break;
-    }
-}
-
-// Tratador do botão A
-static void gpio_button_a_handler(uint gpio, uint32_t events) {
-    uint32_t current_time = to_us_since_boot(get_absolute_time());
-    
-    // Debounce: verifica se passaram pelo menos 200ms desde o último acionamento
-    if (current_time - last_time_button_a > 200000) {
-        last_time_button_a = current_time;
-
-        buttonA_flag = true;
-    }
-}
-
-// Tratador do botão B
-static void gpio_button_b_handler(uint gpio, uint32_t events) {
-    uint32_t current_time = to_us_since_boot(get_absolute_time());
-    
-    // Debounce: verifica se passaram pelo menos 200ms desde o último acionamento
-    if (current_time - last_time_button_b > 200000) {
-        last_time_button_b = current_time;
-
-        buttonB_flag = true;
-    }
-}
-
-
-// Tratador do botão do joystick
-static void gpio_button_joystick_handler(uint gpio, uint32_t events) {
-    uint32_t current_time = to_us_since_boot(get_absolute_time());
-    
-    // Debounce: verifica se passaram pelo menos 200ms desde o último acionamento
-    if (current_time - last_time_button_joystick > 200000) {
-        last_time_button_joystick = current_time;
-
-        buttonJoyStick_flag = true;
-    }
-}
 
 // Função modificada para controle por etapas
 void simular_escaneamento() {
@@ -889,8 +664,8 @@ void simular_escaneamento() {
         if(buttonJoyStick_flag){
             npClear();
             npWrite();
-            ssd1306_fill(&ssd, false);
-            ssd1306_send_data(&ssd);
+            ssd1306_fill(&display, false);
+            ssd1306_send_data(&display);
             buttonJoyStick_flag = false;
             configurar_interrupcoes_botoes(true, true, true);
             break;
@@ -948,13 +723,13 @@ void exibir_grafico_matriz(Reflectancia r){
 
 void exibir_grafico_display(Reflectancia r) {
     // Limpa a tela
-    ssd1306_fill(&ssd, false);
+    ssd1306_fill(&display, false);
     
 
     
     // Define a posição base para as barras (deixando espaço para o título)
     // Supondo que 'ssd.height' é a altura do display e 'TAMANHO_FONTE' é o tamanho da fonte (ex: 8)
-    uint8_t y_base = ssd.height - MARGEM - TAMANHO_FONTE - 10;  // "10" é um deslocamento extra para separar a barra dos valores
+    uint8_t y_base = display.height - MARGEM - TAMANHO_FONTE - 10;  // "10" é um deslocamento extra para separar a barra dos valores
     
     // Posições horizontais para as 4 bandas
     const uint8_t colunas[4] = {MARGEM, 34, 64, 94};
@@ -984,21 +759,21 @@ void exibir_grafico_display(Reflectancia r) {
         
         // Desenha a barra de reflectância
         // Parâmetros: top = y_top, left = colunas[i], width = 20, height = altura
-        ssd1306_rect(&ssd, y_top, colunas[i], 20, altura, true, true);
+        ssd1306_rect(&display, y_top, colunas[i], 20, altura, true, true);
         
         // Prepara o valor numérico (em porcentagem)
         char buffer[8];
         snprintf(buffer, sizeof(buffer), "%.0f%%", porcentagem);
         
         // Exibe o valor numérico abaixo da barra
-        ssd1306_draw_string(&ssd, buffer, colunas[i], y_base + 2);
+        ssd1306_draw_string(&display, buffer, colunas[i], y_base + 2);
         
         // Exibe o rótulo da banda ainda mais abaixo
-        ssd1306_draw_string(&ssd, rotulos[i], colunas[i] + 6, y_base + TAMANHO_FONTE + 4);
+        ssd1306_draw_string(&display, rotulos[i], colunas[i] + 6, y_base + TAMANHO_FONTE + 4);
     }
     
     // Envia os dados para o display
-    ssd1306_send_data(&ssd);
+    ssd1306_send_data(&display);
 }
 
 void animacao_analise(int duracao_ms) {
@@ -1017,18 +792,18 @@ void animacao_analise(int duracao_ms) {
 
     // Animação de carregamento
     for (int i = 0; i <= total_passos; i++) {
-        ssd1306_fill(&ssd, false);
+        ssd1306_fill(&display, false);
         
         // Exibe o texto "Analisando" acima da barra
-        ssd1306_draw_string(&ssd, "ANALISANDO", 24, 20);
+        ssd1306_draw_string(&display, "ANALISANDO", 24, 20);
         
         // Barra de progresso horizontal: largura máxima agora é 100 pixels
         uint8_t largura = (i * 100) / total_passos;
         // Desenha a barra na posição: top = 20, left = 55, com altura de 6 pixels
-        ssd1306_rect(&ssd, 35, 14, largura, 6, true, true);
+        ssd1306_rect(&display, 35, 14, largura, 6, true, true);
 
         
-        ssd1306_send_data(&ssd);
+        ssd1306_send_data(&display);
         sleep_ms(delay_por_passo);
     }
 
@@ -1053,7 +828,7 @@ void exibir_resultado_analise_folha(EstadoFolha folha){
 }
 void exibir_resultado_analise(bool resultado, float R , float G, float B, float NIR, float ndvi, float gndvi ){
     char buffer[24];
-    ssd1306_fill(&ssd, false);
+    ssd1306_fill(&display, false);
 
     // Linha 1 - Status principal centralizado
     snprintf(buffer, sizeof(buffer), "%s", resultado ? "INFECTADA" : "SAUDAVEL");
@@ -1082,7 +857,7 @@ void exibir_resultado_analise(bool resultado, float R , float G, float B, float 
     escrever_linha(buffer, 5, 0, false);
 
     
-    ssd1306_send_data(&ssd);
+    ssd1306_send_data(&display);
 
     configurar_interrupcoes_botoes(true, false, false);
 
@@ -1185,3 +960,23 @@ void teste_deteccao() {
 
 }
 */
+
+void display_init(ssd1306_t *display) {
+    // Configuração I2C a 400kHz
+    i2c_init(I2C_PORT, 400 * 1000);
+    
+    // Configura pinos I2C
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA); // Ativa pull-ups internos
+    gpio_pull_up(I2C_SCL);
+
+    // Inicialização do controlador SSD1306
+    ssd1306_init(display, WIDTH, HEIGHT, false, endereco, I2C_PORT);
+    ssd1306_config(display);
+    ssd1306_send_data(display);
+
+    // Limpa a tela inicialmente
+    ssd1306_fill(display, false);
+    ssd1306_send_data(display);
+}
