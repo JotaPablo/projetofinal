@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(projeto projeto.c lib/ssd1306.c lib/neopixel.c)
+add_executable(projeto projeto.c lib/ssd1306.c lib/neopixel.c lib/buzzer.c)
 
 pico_set_program_name(projeto "projeto")
 pico_set_program_version(projeto "0.1")

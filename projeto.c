@@ -15,6 +15,7 @@
 // Periféricos
 #include "lib/ssd1306.h"
 #include "lib/neopixel.h"
+#include "lib/buzzer.h"
 
 /**********************************
 * DEFINES E CONFIGURAÇÕES
@@ -32,6 +33,9 @@
 #define BUTTON_A 5
 #define BUTTON_B 6
 #define BUTTON_JOYSTICK 22
+
+// Buzzer
+#define BUZZER_PIN 10
 
 // Joystick
 #define VRX_PIN 27
@@ -147,17 +151,18 @@ void exibir_resultado_analise(bool resultado, float R , float G, float B, float 
 void exibir_resultado_analise_folha(EstadoFolha folha);
 void animacao_analise(int duracao_ms);
 void exibir_grafico_matriz(Reflectancia r);
+void escrever_linha(const char* texto, int linha, int coluna, bool centralizado);
 
 // Lógica do programa
 bool detectar_doenca(float R, float G, float B, float NIR);
 bool detectar_doenca_folha(EstadoFolha folha); 
 void simular_escaneamento();
-Planta gerar_planta(int id);
+Planta gerar_planta(int id, int tipo);
 bool analisar_folha(Planta p, int folha);
 void tratar_planta(Planta *p);
 void exibe_planta(Planta p, int folha);
 void teste_deteccao();
-void exibir_menu_planta(int num);
+void exibir_menu_planta(int atual, int custo);
 void exibir_menu_folha(int num);
 void gerenciar_menu_principal(int *planta_atual, bool *atualiza_display );
 void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_display );
@@ -168,14 +173,21 @@ int main() {
     Planta plantas[NUM_PLANTAS];
     Estado estado = ESTADO_MENU;
     int planta_atual = 0, folha_atual = 0;
+    int custo = 0;
     bool atualiza_display  = true;
     uint32_t tempo_ultima_atualizacao_menu = 0; // Timer para atualizações periódicas
     uint32_t tempo_ultima_atualizacao_folha = 0; // Timer para atualizações periódicas
     uint32_t tempo_atual = 0;
     // Inicialização das plantas
-    for(int i = 0; i < NUM_PLANTAS; i++) {
-        plantas[i] = gerar_planta(i);
-    }
+    plantas[0] = gerar_planta(0, 0); // Saudável
+    plantas[1] = gerar_planta(1, 0); // Saudável
+    plantas[2] = gerar_planta(2, 1); // Visivelmente infectada
+    plantas[3] = gerar_planta(3, 2); // Infectada sem sintomas
+    plantas[4] = gerar_planta(4, 2); // Infectada sem sintomas
+    
+     
+     
+     
 
     while(true) {
         ler_joystick();
@@ -183,26 +195,82 @@ int main() {
 
         tempo_atual = to_ms_since_boot(get_absolute_time());
 
+        buzzer_update();
+
         switch(estado) {
             case ESTADO_MENU:
                 gerenciar_menu_principal(&planta_atual, &atualiza_display);
                 
+
+                if(buttonA_flag){
+                    configurar_interrupcoes_botoes(false, false, false);
+                    ssd1306_fill(&ssd, false);
+                    if(plantas[planta_atual].tratada){
+                        buzzer_som_analise_concluida();
+                        sleep_ms(100);
+                        buzzer_turn_off();
+                        sleep_ms(100);
+                        buzzer_som_analise_concluida();    
+                        sleep_ms(100);
+                        buzzer_turn_off();
+                        escrever_linha("TRATAMENTO JA", 2, 0, true);
+                        escrever_linha("REALIZADO", 3, 0, true);
+
+                        sleep_ms(1000);
+                    }
+                    else{
+                        buzzer_som_analise_iniciada();
+                        sleep_ms(100);
+                        buzzer_turn_off();
+                        sleep_ms(100);
+                        buzzer_som_analise_iniciada();    
+                        sleep_ms(100);
+                        buzzer_turn_off();
+                        escrever_linha("TRATANDO PLANTA", 2, 0, true);
+                        escrever_linha("", 3, 0, true);
+                        sleep_ms(250);
+                        escrever_linha("TRATANDO PLANTA", 2, 0, true);
+                        escrever_linha(".", 3, 0, true);
+                        sleep_ms(250);
+                        escrever_linha("TRATANDO PLANTA", 2, 0, true);
+                        escrever_linha("..", 3, 0, true);
+                        sleep_ms(250);
+                        escrever_linha("TRATANDO PLANTA", 2, 0, true);
+                        escrever_linha("...", 3, 0, true);
+                        sleep_ms(250);
+                        buzzer_som_analise_concluida();
+                        sleep_ms(100);
+                        buzzer_turn_off();
+                        sleep_ms(100);
+                        buzzer_som_analise_concluida();    
+                        sleep_ms(100);
+                        buzzer_turn_off();
+                        custo += CUSTO_POR_FUNGICIDA;
+                    }
+                    tratar_planta(&plantas[planta_atual]);
+                    configurar_interrupcoes_botoes(true, true, true);
+                    buttonA_flag = false;
+                    atualiza_display = true;
+                }
+
                 if(buttonB_flag) {
                     estado = ESTADO_SELECIONAR_FOLHA;
                     folha_atual = 0;
                     configurar_interrupcoes_botoes(true, true, false);
                     atualiza_display = true;
                     buttonB_flag = false;
+                    buzzer_som_selecao();
                 }
                 
                 if(buttonJoyStick_flag) {
                     estado = ESTADO_ESCANEAMENTO;
                     buttonJoyStick_flag = false;
+                    buzzer_som_selecao();
                 }
                 
                 if(atualiza_display) {
                     exibe_planta(plantas[planta_atual], -1);
-                    exibir_menu_planta(planta_atual + 1);
+                    exibir_menu_planta(planta_atual + 1, custo);
                     atualizar_led_status(plantas[planta_atual].infectada, false);
                     atualiza_display = false;
                 }
@@ -227,6 +295,7 @@ int main() {
                     configurar_interrupcoes_botoes(true, true, true);
                     buttonA_flag = false;
                     atualiza_display = true;
+                    buzzer_som_selecao();
                 }
                 
                 if(atualiza_display) {
@@ -251,6 +320,7 @@ int main() {
                 atualizar_led_status(resultado, false);
                 exibir_resultado_analise_folha(plantas[planta_atual].folhas[folha_atual]);
                 configurar_interrupcoes_botoes(true, true, false); // Restaurar
+                buzzer_som_selecao();
                 estado = ESTADO_SELECIONAR_FOLHA;
                 atualiza_display = true;
                 break;
@@ -260,6 +330,7 @@ int main() {
                 simular_escaneamento();
                 estado = ESTADO_MENU;
                 atualiza_display = true;
+                buzzer_som_selecao();
                 break;
         }
 
@@ -275,6 +346,7 @@ void gerenciar_menu_principal(int *planta_atual, bool *atualiza_display) {
     else if(vrx_valor == ESQUERDA) {
         *planta_atual = (*planta_atual - 1 + NUM_PLANTAS) % NUM_PLANTAS;
         *atualiza_display = true;
+        
     }
 }
 
@@ -282,10 +354,12 @@ void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_display) {
     if(vrx_valor == DIREITA) {
         *folha_atual = (*folha_atual + 1) % FOLHAS_POR_PLANTA;
         *atualiza_display = true;
+        
     }
     else if(vrx_valor == ESQUERDA) {
         *folha_atual = (*folha_atual - 1 + FOLHAS_POR_PLANTA) % FOLHAS_POR_PLANTA;
         *atualiza_display = true;
+        
     }
 }
 
@@ -306,21 +380,47 @@ void atualizar_led_status(bool infectado, bool desliga) {
 // Função para criar uma planta com infecção aleatória
 // Função para criar uma planta com id e configurar suas folhas
 // Função para gerar uma nova planta
-Planta gerar_planta(int id) {
+Planta gerar_planta(int id, int tipo) {
     Planta p;
     p.id = id;
     p.infectada = false;
     p.tratada = false;
 
     for (int i = 0; i < FOLHAS_POR_PLANTA; i++) {
-        // Gerar valores aleatórios de reflectância
-        float R = (rand() % 40 + 30) / 100.0f;
-        float G = (rand() % 40 + 30) / 100.0f;
-        float B = (rand() % 40 + 20) / 100.0f;
-        float NIR = (rand() % 40 + 50) / 100.0f;
+        float R, G, B, NIR;
+        bool doente = false;
+        bool visivel_doente = false;
 
-        bool doente = detectar_doenca(R, G, B, NIR);
-        bool visivel_doente = (R > 0.65f) && (G < 0.55f);  // Critério de visibilidade
+        // Configuração baseada no tipo de planta desejado
+        switch (tipo) {
+            case 0: // Saudável
+                // Garante que os valores vão gerar um NDVI e GNDVI sempre acima do limiar saudável
+                R = (rand() % 10 + 30) / 100.0f;  // Mantém baixo para um NDVI alto
+                G = (rand() % 10 + 60) / 100.0f;  // Mantém alto para um GNDVI alto
+                B = (rand() % 20 + 40) / 100.0f;  
+                NIR = (rand() % 20 + 95) / 100.0f;  // Mantém bem alto para NDVI/GNDVI saudáveis
+                break;
+
+            case 1: // Visivelmente infectada
+                R = 0.70f + (rand() % 15) / 100.0f;
+                G = 0.40f + (rand() % 10) / 100.0f;
+                B = 0.30f + (rand() % 10) / 100.0f;
+                NIR = 0.60f + (rand() % 10) / 100.0f;
+                visivel_doente = true;
+                doente = true;
+                break;
+
+            case 2: // Infectada sem sintomas visíveis
+                R = 0.50f + (rand() % 10) / 100.0f;
+                G = 0.55f + (rand() % 10) / 100.0f;
+                B = 0.45f + (rand() % 10) / 100.0f;
+                NIR = 0.70f + (rand() % 20) / 100.0f;
+                doente = true;
+                break;
+        }
+
+        // Verifica infecção com a função existente
+        doente = detectar_doenca(R, G, B, NIR);
 
         // Calcula índices NDVI e GNDVI
         float ndvi = (NIR - R) / (NIR + R + 0.001f);
@@ -342,6 +442,7 @@ Planta gerar_planta(int id) {
 
     return p;
 }
+
 
 bool analisar_folha(Planta p, int folha) {
     EstadoFolha estado_folha = p.folhas[folha];
@@ -431,7 +532,7 @@ void escrever_linha(const char* texto, int linha, int coluna, bool centralizado)
 }
 
 // Função para exibir menu de plantas
-void exibir_menu_planta(int num) {
+void exibir_menu_planta(int atual, int custo) {
     static uint8_t mensagem_atual = 0;
     static uint32_t ultima_troca = 0;
     char buffer[30];
@@ -447,12 +548,16 @@ void exibir_menu_planta(int num) {
     
     // Título + contador
     snprintf(buffer, sizeof(buffer), "%s %d/%d", 
-           "PLANTA:", num, 5);
+           "PLANTA:", atual, 5);
     escrever_linha(buffer, 0, 0, true); // Centralizado
 
     // Seta direita
     escrever_linha(">", 0, 15, false); // Coluna 15 (128 - 8px)
     
+    // CUSTO
+    snprintf(buffer, sizeof(buffer), "%s %d.00", 
+           "CUSTO:", custo);
+    escrever_linha(buffer, 1, 0, true); // Centralizado
 
     // ----- MENSAGENS -----
     uint32_t agora = to_ms_since_boot(get_absolute_time());
@@ -473,7 +578,7 @@ void exibir_menu_planta(int num) {
         break;
     case 2:
         escrever_linha("APERTE A", 3, 0, true);    
-        escrever_linha("p/ PULVERIZAR", 4, 0, true);
+        escrever_linha("p/ TRATAR", 4, 0, true);
         break;
     case 3:
         escrever_linha("APERTE JOY", 3, 0, true);    
@@ -575,6 +680,8 @@ void setup(){
     npInit(LED_PIN);  // Iniacializa NeoPixels
 
     display_init();    // Configura display OLED
+
+    buzzer_init(BUZZER_PIN);
 
     adc_init();
     adc_gpio_init(VRX_PIN);
@@ -864,7 +971,7 @@ void exibir_grafico_display(Reflectancia r) {
         }
         
         // Converte o valor (0.0 a 1.0) para porcentagem (0 a 100)
-        int porcentagem = (int)(valor * 100);
+        float porcentagem = (valor * 100);
         
         // Define a escala: 40 pixels corresponde a valor 1.0 (ou 100%)
         uint8_t escala = 40;
@@ -881,7 +988,7 @@ void exibir_grafico_display(Reflectancia r) {
         
         // Prepara o valor numérico (em porcentagem)
         char buffer[8];
-        snprintf(buffer, sizeof(buffer), "%d%%", porcentagem);
+        snprintf(buffer, sizeof(buffer), "%.0f%%", porcentagem);
         
         // Exibe o valor numérico abaixo da barra
         ssd1306_draw_string(&ssd, buffer, colunas[i], y_base + 2);
@@ -898,8 +1005,16 @@ void animacao_analise(int duracao_ms) {
     const uint8_t centro_x = 64;
     const uint8_t centro_y = 32;
     const int total_passos = 50; // Número de quadros da animação
-    const int delay_por_passo = duracao_ms / total_passos;
+    const int delay_por_passo = (duracao_ms) / total_passos;
     
+    buzzer_som_analise_iniciada();
+    sleep_ms(100);
+    buzzer_turn_off();
+    sleep_ms(100);
+    buzzer_som_analise_iniciada();    
+    sleep_ms(100);
+    buzzer_turn_off();
+
     // Animação de carregamento
     for (int i = 0; i <= total_passos; i++) {
         ssd1306_fill(&ssd, false);
@@ -916,6 +1031,14 @@ void animacao_analise(int duracao_ms) {
         ssd1306_send_data(&ssd);
         sleep_ms(delay_por_passo);
     }
+
+    buzzer_som_analise_concluida();
+    sleep_ms(100);
+    buzzer_turn_off();
+    sleep_ms(100);
+    buzzer_som_analise_concluida();    
+    sleep_ms(100);
+    buzzer_turn_off();
 }
 
 void exibir_resultado_analise_folha(EstadoFolha folha){
@@ -933,30 +1056,30 @@ void exibir_resultado_analise(bool resultado, float R , float G, float B, float 
     ssd1306_fill(&ssd, false);
 
     // Linha 1 - Status principal centralizado
-    snprintf(buffer, sizeof(buffer), "%s", resultado ? "%% INFECTADA %%" : "== SAUDAVEL ==");
+    snprintf(buffer, sizeof(buffer), "%s", resultado ? "INFECTADA" : "SAUDAVEL");
     escrever_linha(buffer, 0, 0, true); // Centralizado
 
     // Linha 2 - Reflectância RGB
     snprintf(buffer, sizeof(buffer), "R:%.0f%% G:%.0f%%", 
              R * 100, 
              G * 100);
-    escrever_linha(buffer, 1, 0, false);
+    escrever_linha(buffer, 2, 0, false);
 
     // Linha 3 - Reflectância B e NIR
     snprintf(buffer, sizeof(buffer), "B:%.0f%% NIR:%.0f%%", 
              B * 100, 
              NIR * 100);
-    escrever_linha(buffer, 2, 0, false);
+    escrever_linha(buffer, 3, 0, false);
 
     // Linha 4 - Índices NDVI e GNDVI
     snprintf(buffer, sizeof(buffer), "NDVI:%.2f", 
              ndvi);
-    escrever_linha(buffer, 3, 0, false);
+    escrever_linha(buffer, 4, 0, false);
 
     // Linha 4 - Índices GNDVI
     snprintf(buffer, sizeof(buffer), "GNDVI:%.2f",  
              gndvi);
-    escrever_linha(buffer, 4, 0, false);
+    escrever_linha(buffer, 5, 0, false);
 
     
     ssd1306_send_data(&ssd);
