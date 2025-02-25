@@ -159,8 +159,8 @@ void exibe_planta(Planta p, int folha);
 void teste_deteccao();
 void exibir_menu_planta(int num);
 void exibir_menu_folha(int num);
-void gerenciar_menu_principal(int *planta_atual, bool *atualiza_matriz);
-void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_matriz);
+void gerenciar_menu_principal(int *planta_atual, bool *atualiza_display );
+void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_display );
 void atualizar_led_status(bool infectado, bool desliga);
 
 int main() {
@@ -168,7 +168,7 @@ int main() {
     Planta plantas[NUM_PLANTAS];
     Estado estado = ESTADO_MENU;
     int planta_atual = 0, folha_atual = 0;
-    bool atualiza_matriz = true;
+    bool atualiza_display  = true;
 
     // Inicialização das plantas
     for(int i = 0; i < NUM_PLANTAS; i++) {
@@ -181,12 +181,13 @@ int main() {
 
         switch(estado) {
             case ESTADO_MENU:
-                gerenciar_menu_principal(&planta_atual, &atualiza_matriz);
+                gerenciar_menu_principal(&planta_atual, &atualiza_display);
                 
                 if(buttonB_flag) {
                     estado = ESTADO_SELECIONAR_FOLHA;
                     folha_atual = 0;
                     configurar_interrupcoes_botoes(true, true, false);
+                    atualiza_display = true;
                     buttonB_flag = false;
                 }
                 
@@ -195,16 +196,16 @@ int main() {
                     buttonJoyStick_flag = false;
                 }
                 
-                if(atualiza_matriz) {
+                if(atualiza_display) {
                     exibe_planta(plantas[planta_atual], -1);
                     exibir_menu_planta(planta_atual + 1);
                     atualizar_led_status(plantas[planta_atual].infectada, false);
-                    atualiza_matriz = false;
+                    atualiza_display = false;
                 }
                 break;
 
             case ESTADO_SELECIONAR_FOLHA:
-                gerenciar_selecao_folha(&folha_atual, &atualiza_matriz);
+                gerenciar_selecao_folha(&folha_atual, &atualiza_display);
                 
                 if(buttonB_flag) {
                     estado = ESTADO_ANALISAR;
@@ -215,53 +216,60 @@ int main() {
                     estado = ESTADO_MENU;
                     configurar_interrupcoes_botoes(true, true, true);
                     buttonA_flag = false;
-                    atualiza_matriz = true;
+                    atualiza_display = true;
                 }
                 
-                if(atualiza_matriz) {
+                if(atualiza_display) {
                     exibe_planta(plantas[planta_atual], folha_atual + 1);
                     exibir_menu_folha(folha_atual + 1);
-                    atualiza_matriz = false;
+                    atualizar_led_status(plantas[planta_atual].infectada, false);
+                    atualiza_display = false;
                 }
                 break;
 
             case ESTADO_ANALISAR:
-                exibir_resultado_analise_folha(plantas[planta_atual].folhas[folha_atual]);
+                configurar_interrupcoes_botoes(false, false, false); // Desativar todas
+                animacao_analise(500);
                 bool resultado = detectar_doenca_folha(plantas[planta_atual].folhas[folha_atual]);
                 if(resultado) plantas[planta_atual].infectada = true;
+                atualizar_led_status(resultado, false);
+                exibir_resultado_analise_folha(plantas[planta_atual].folhas[folha_atual]);
+                configurar_interrupcoes_botoes(true, true, false); // Restaurar
                 estado = ESTADO_SELECIONAR_FOLHA;
+                atualiza_display = true;
                 break;
 
             case ESTADO_ESCANEAMENTO:
+                atualizar_led_status(false, true);
                 simular_escaneamento();
                 estado = ESTADO_MENU;
-                atualiza_matriz = true;
+                atualiza_display = true;
                 break;
         }
-        
+
         sleep_ms(100);
     }
 }
 
-void gerenciar_menu_principal(int *planta_atual, bool *atualiza_matriz) {
+void gerenciar_menu_principal(int *planta_atual, bool *atualiza_display) {
     if(vrx_valor == DIREITA) {
         *planta_atual = (*planta_atual + 1) % NUM_PLANTAS;
-        *atualiza_matriz = true;
+        *atualiza_display = true;
     }
     else if(vrx_valor == ESQUERDA) {
         *planta_atual = (*planta_atual - 1 + NUM_PLANTAS) % NUM_PLANTAS;
-        *atualiza_matriz = true;
+        *atualiza_display = true;
     }
 }
 
-void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_matriz) {
+void gerenciar_selecao_folha(int *folha_atual, bool *atualiza_display) {
     if(vrx_valor == DIREITA) {
         *folha_atual = (*folha_atual + 1) % FOLHAS_POR_PLANTA;
-        *atualiza_matriz = true;
+        *atualiza_display = true;
     }
     else if(vrx_valor == ESQUERDA) {
         *folha_atual = (*folha_atual - 1 + FOLHAS_POR_PLANTA) % FOLHAS_POR_PLANTA;
-        *atualiza_matriz = true;
+        *atualiza_display = true;
     }
 }
 
@@ -672,7 +680,6 @@ void simular_escaneamento() {
     uint8_t etapa = 2; // 0 = R/NIR, 1 = G/B, 2 = não faz nenhuma leitura
     estado_escaneamento = MODO_ESCANEAMENTO;
 
-    bool animacao_concluida = false;
     bool mudou_o_valor = true;
 
     printf("ESTADO B: %d\n", buttonB_flag);
@@ -699,17 +706,16 @@ void simular_escaneamento() {
                 mudou_o_valor = true;
             }
             
-            if(buttonA_flag) {
+            if(buttonB_flag) {
                 etapa = (etapa + 1) % 3;
-                buttonA_flag = false;
+                buttonB_flag = false;
             }
             
 
-            if(buttonB_flag) {
-                animacao_concluida = false;
+            if(buttonA_flag) {
                 estado_escaneamento = ANALISE;
-                configurar_interrupcoes_botoes(true, false, true);
-                buttonB_flag = false;
+                configurar_interrupcoes_botoes(false, false, false);
+                buttonA_flag = false;
             }
 
 
@@ -729,41 +735,32 @@ void simular_escaneamento() {
         }
 
         else if(estado_escaneamento == ANALISE){
+                            
+            bool resultado = detectar_doenca(valores_ajustados.R,
+                                            valores_ajustados.G,
+                                            valores_ajustados.B,
+                                            valores_ajustados.NIR);
+            animacao_analise(500);
+            float ndvi = (valores_ajustados.NIR - valores_ajustados.R) / (valores_ajustados.NIR + valores_ajustados.R + 0.001f);
+            float gndvi = (valores_ajustados.NIR - valores_ajustados.G) / (valores_ajustados.NIR + valores_ajustados.G + 0.001f);
             
+            atualizar_led_status(resultado, false);
+            exibir_resultado_analise(resultado,valores_ajustados.R,
+                                    valores_ajustados.G,
+                                    valores_ajustados.B,
+                                    valores_ajustados.NIR,
+                                    ndvi,
+                                    gndvi
+                                    );
 
-            if(!animacao_concluida){
-                
-                bool resultado = detectar_doenca(valores_ajustados.R,
-                                                valores_ajustados.G,
-                                                valores_ajustados.B,
-                                                valores_ajustados.NIR);
-                animacao_analise(500);
-                float ndvi = (valores_ajustados.NIR - valores_ajustados.R) / (valores_ajustados.NIR + valores_ajustados.R + 0.001f);
-                float gndvi = (valores_ajustados.NIR - valores_ajustados.G) / (valores_ajustados.NIR + valores_ajustados.G + 0.001f);
-                
-                exibir_resultado_analise(resultado,valores_ajustados.R,
-                                        valores_ajustados.G,
-                                        valores_ajustados.B,
-                                        valores_ajustados.NIR,
-                                        ndvi,
-                                        gndvi
-                                         );
-
-                sleep_ms(5000);
-               //teste_deteccao();
-               animacao_concluida = true;
-               buttonA_flag = true;
-            }
-
-
-            if(buttonA_flag) {
-                mudou_o_valor = true;
-                estado_escaneamento = MODO_ESCANEAMENTO;
-                etapa = 2;
-                configurar_interrupcoes_botoes(true, true, true);
-                buttonA_flag = false;
-            }
-
+            //teste_deteccao();
+        
+            mudou_o_valor = true;
+            estado_escaneamento = MODO_ESCANEAMENTO;
+            
+            etapa = 2;
+            configurar_interrupcoes_botoes(true, true, true);
+            
         }
 
         if(buttonJoyStick_flag){
@@ -945,15 +942,16 @@ void exibir_resultado_analise(bool resultado, float R , float G, float B, float 
              gndvi);
     escrever_linha(buffer, 4, 0, false);
 
-    // Linha 6 - Diagnóstico
-    /*
-    bool visivel = (R > 0.65f) && (G < 0.55f);
-    const char* diagnostico = visivel ? 
-        "SINTOMAS VISIVEIS" : 
-        "DIAGNOSTICO POR NIR";
-    escrever_linha(diagnostico, 4, 0, true);
-    */
+    
     ssd1306_send_data(&ssd);
+
+    configurar_interrupcoes_botoes(true, false, false);
+
+    // Espera pelo botão A
+    while(!buttonA_flag) {
+        sleep_ms(10);
+    }
+    buttonA_flag = false;
 }
 
 
