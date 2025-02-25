@@ -169,7 +169,9 @@ int main() {
     Estado estado = ESTADO_MENU;
     int planta_atual = 0, folha_atual = 0;
     bool atualiza_display  = true;
-
+    uint32_t tempo_ultima_atualizacao_menu = 0; // Timer para atualizações periódicas
+    uint32_t tempo_ultima_atualizacao_folha = 0; // Timer para atualizações periódicas
+    uint32_t tempo_atual = 0;
     // Inicialização das plantas
     for(int i = 0; i < NUM_PLANTAS; i++) {
         plantas[i] = gerar_planta(i);
@@ -178,6 +180,8 @@ int main() {
     while(true) {
         ler_joystick();
         normalizar_joystick();
+
+        tempo_atual = to_ms_since_boot(get_absolute_time());
 
         switch(estado) {
             case ESTADO_MENU:
@@ -202,6 +206,12 @@ int main() {
                     atualizar_led_status(plantas[planta_atual].infectada, false);
                     atualiza_display = false;
                 }
+
+                // Verifica se passaram 3 segundos
+                if (tempo_atual - tempo_ultima_atualizacao_menu >= 3000) {
+                    atualiza_display = true;
+                    tempo_ultima_atualizacao_menu = tempo_atual;
+                }
                 break;
 
             case ESTADO_SELECIONAR_FOLHA:
@@ -224,6 +234,12 @@ int main() {
                     exibir_menu_folha(folha_atual + 1);
                     atualizar_led_status(plantas[planta_atual].infectada, false);
                     atualiza_display = false;
+                }
+
+                 // Verifica se passaram 3 segundos
+                 if (tempo_atual - tempo_ultima_atualizacao_folha >= 3000) {
+                    atualiza_display = true;
+                    tempo_ultima_atualizacao_folha = tempo_atual;
                 }
                 break;
 
