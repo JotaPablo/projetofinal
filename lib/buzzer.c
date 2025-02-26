@@ -83,3 +83,25 @@ void buzzer_som_analise_concluida() {
    
     buzzer_start(523, 200);
 } 
+
+// Sons para diagnóstico
+void buzzer_infectada() {
+    // Alerta grave com padrão de urgência (3 bips rápidos em 392Hz)
+    for(int i = 0; i < 3; i++) {
+        buzzer_start(2000, 150);  
+        sleep_ms(150);            // Intervalo curto entre bips
+        buzzer_stop();
+        sleep_ms(150);
+    }
+}
+
+void buzzer_saudavel() {
+    // Confirmação melódica em Lá Maior (A4 + C#5 + E5)
+    buzzer_start(440, 150);     // A4 por 150ms
+    sleep_ms(150);
+    buzzer_start(554, 150);     // C#5 por 150ms
+    sleep_ms(150);
+    buzzer_start(659, 150);     // E5 por 150ms
+    sleep_ms(150);
+    buzzer_stop();
+}

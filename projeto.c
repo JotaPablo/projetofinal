@@ -25,6 +25,7 @@
 * TIPOS DE DADOS
 **********************************/
 // Estrutura para armazenar reflectâncias
+
 typedef struct {
     float R;    // Reflectância no vermelho
     float G;    // Reflectância no verde
@@ -122,7 +123,7 @@ int main() {
     display_init(&display);    // Inicializa display OLED
 
     Planta plantas[NUM_PLANTAS]; // Array de plantas do sistema
-    Estado estado_atual = ESTADO_MENU; // Estado inicial da máquina de estados
+    Estado estado_atual = ESTADO_ESCANEAMENTO; // Estado inicial da máquina de estados
     
     // Variáveis de controle da interface
     int indice_planta = 0;      // Planta selecionada no menu
@@ -243,6 +244,8 @@ int main() {
                     atualizar_display = true;
                     buttonB_flag = false;
                     buzzer_som_selecao();
+                    sleep_ms(100);
+                    continue;
                 }
 
                 //---------- Tratamento do Botão Joystick ---
@@ -282,6 +285,8 @@ int main() {
                     buttonA_flag = false;
                     atualizar_display = true;
                     buzzer_som_selecao();
+                    sleep_ms(100);
+                    continue;
                 }
                 
                 //---------- Atualização de Display ---------
@@ -309,9 +314,14 @@ int main() {
                 if(resultado) {
                     plantas[indice_planta].infectada = true; // Marca planta como infectada
                 }
-                
+                sleep_ms(200);
+
                 //---------- Feedback Visual/Sonoro ---------
                 atualizar_led_status(resultado, false); // Atualiza LEDs
+                if(resultado)
+                    buzzer_infectada();
+                else
+                    buzzer_saudavel();
                 exibir_resultado_analise_folha(plantas[indice_planta].folhas[indice_folha]); // Mostra resultados
                 
                 //---------- Retorno ao Estado Anterior ---------
@@ -699,16 +709,18 @@ void simular_escaneamento() {
     while (true){
         // Modo de ajuste de calibração
         if(estado_escaneamento == MODO_ESCANEAMENTO){
+
+            ler_joystick();
+            buzzer_update();                  // Atualiza estado do buzzer
+
             // Calibração de R e NIR            
             if(etapa_calibracao == 0){
-                ler_joystick();
                 valores_ajustados.R = vry_valor / (float)ADC_MAX;
                 valores_ajustados.NIR = vrx_valor / (float)ADC_MAX;
                 atualizar_interface = true;
             }
             // Calibração de G e B
             else if(etapa_calibracao == 1) {
-                ler_joystick();
                 valores_ajustados.G = vry_valor / (float)ADC_MAX;
                 valores_ajustados.B = vrx_valor / (float)ADC_MAX;
                 atualizar_interface = true;
@@ -718,6 +730,7 @@ void simular_escaneamento() {
             if(buttonB_flag) {
                 etapa_calibracao = (etapa_calibracao + 1) % 3;
                 buttonB_flag = false;
+                buzzer_som_selecao();
             }
             
             // Iniciar análise
@@ -749,7 +762,12 @@ void simular_escaneamento() {
             
             // Feedback ao usuário
             animacao_analise(500);
+            sleep_ms(200);
             atualizar_led_status(resultado, false);
+            if(resultado)
+                buzzer_infectada();
+            else
+                buzzer_saudavel();
             exibir_resultado_analise(resultado,valores_ajustados.R,
                                     valores_ajustados.G,
                                     valores_ajustados.B,
@@ -757,6 +775,8 @@ void simular_escaneamento() {
                                     ndvi,
                                     gndvi
                                     );
+            buzzer_som_selecao();
+            atualizar_led_status(false, true);
 
             // Reset do sistema 
             atualizar_interface = true;

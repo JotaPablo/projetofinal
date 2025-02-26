@@ -31,9 +31,9 @@ void buzzer_update(void);
 void buzzer_som_selecao(void);
 void buzzer_som_analise_iniciada(void);
 void buzzer_som_analise_concluida(void);
+void buzzer_infectada();
+void buzzer_saudavel();
 
-#ifdef __cplusplus
-}
-#endif
+
 
 #endif // BUZZER_H
