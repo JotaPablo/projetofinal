@@ -12,7 +12,7 @@
 #define BUTTON_A 5
 #define BUTTON_B 6
 #define BUTTON_JOYSTICK 22
-#define BUZZER_PIN 10
+#define BUZZER_PIN 21
 
 //Controle do Joystick
 #define VRX_PIN 27
