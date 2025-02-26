@@ -86,13 +86,15 @@ void buzzer_som_analise_concluida() {
 
 // Sons para diagnóstico
 void buzzer_infectada() {
-    // Alerta grave com padrão de urgência (3 bips rápidos em 392Hz)
-    for(int i = 0; i < 3; i++) {
-        buzzer_start(2000, 150);  
-        sleep_ms(150);            // Intervalo curto entre bips
-        buzzer_stop();
-        sleep_ms(150);
-    }
+    
+    buzzer_start(5000, 150);  
+    sleep_ms(150);
+    buzzer_start(2000, 150);  
+    sleep_ms(150);         
+    buzzer_start(5000, 150);  
+    sleep_ms(150);     
+    buzzer_stop();
+    
 }
 
 void buzzer_saudavel() {
