@@ -3,7 +3,7 @@
 Sistema portátil para detecção precoce da ferrugem do cafeeiro utilizando análise espectral e índices de vegetação (NDVI/GNDVI). Desenvolvido para a plataforma Raspberry Pi Pico (RP2040) com integração de múltiplos periféricos.
 
 ## Vídeo Demonstrativo
-[![Assista ao vídeo no YouTube](https://img.youtube.com/vi/SEU_VIDEO_ID/hqdefault.jpg)](https://youtu.be/SEU_VIDEO_ID)
+[![Assista ao vídeo no YouTube](https://img.youtube.com/vi/NvU5fByL1ds/hqdefault.jpg)](https://youtu.be/NvU5fByL1ds)
 
 ## Arquitetura do Sistema
 
