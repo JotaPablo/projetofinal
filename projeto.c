@@ -87,6 +87,10 @@ Reflectancia valores_ajustados;
 /**********************************
 * PROTÓTIPOS DE FUNÇÕES
 **********************************/
+
+// Testes
+void teste_deteccao();
+
 // Inicialização
 void display_init(ssd1306_t *display);
 
@@ -750,6 +754,8 @@ void simular_escaneamento() {
         }
         // Processamento da análise
         else if(estado_escaneamento == ANALISE){
+
+            //teste_deteccao();
                             
             bool resultado = detectar_doenca(valores_ajustados.R,
                                             valores_ajustados.G,
@@ -1084,60 +1090,72 @@ bool detectar_doenca_folha(EstadoFolha folha){
 }
 
 /*
-void teste_deteccao() {
-
-    bool resultado;
-
-    // Teste 1 (Verdadeiro)
-    resultado = detectar_doenca(0.70f, 0.50f, 0.30f, 0.60f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 2 (Falso)
-    resultado = detectar_doenca(0.40f, 0.70f, 0.50f, 0.95f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 3 (Verdadeiro)
-    resultado = detectar_doenca(0.68f, 0.40f, 0.25f, 0.55f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 4 (Falso)
-    resultado = detectar_doenca(0.50f, 0.60f, 0.40f, 1.20f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 5 (Verdadeiro)
-    resultado = detectar_doenca(0.80f, 0.45f, 0.20f, 0.65f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 6 (Falso)
-    resultado = detectar_doenca(0.30f, 0.70f, 0.50f, 0.85f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 7 (Verdadeiro)
-    resultado = detectar_doenca(0.60f, 0.30f, 0.35f, 0.55f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 8 (Falso)
-    resultado = detectar_doenca(0.40f, 0.58f, 0.35f, 1.0f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 9 (Verdadeiro)
-    resultado = detectar_doenca(0.72f, 0.50f, 0.40f, 0.58f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-    // Teste 10 (Falso)
-    resultado = detectar_doenca(0.35f, 0.50f, 0.40f, 1.0f);
-    exibir_resultado_analise(resultado);
-    sleep_ms(500);
-
-
-}
+* Função de teste automatizado da detecção de doenças
+* Executa 10 casos de teste com valores pré-definidos
 */
+void teste_deteccao() {
+    // Limpa flags de botão antes de iniciar
+    buttonA_flag = false;
+    
+    // Array de testes: {R, G, B, NIR, resultado_esperado}
+    float testes[10][5] = {
+        // Caso 1: Infectada (R alto, NIR baixo)
+        {0.70f, 0.50f, 0.30f, 0.60f, true},
+        
+        // Caso 2: Saudável (NIR alto)
+        {0.40f, 0.70f, 0.50f, 0.95f, false},
+        
+        // Caso 3: Infectada (NDVI abaixo do limiar)
+        {0.68f, 0.40f, 0.25f, 0.55f, true},
+        
+        // Caso 4: Saudável (NIR muito alto)
+        {0.50f, 0.60f, 0.40f, 1.20f, false},
+        
+        // Caso 5: Infectada (R extremo)
+        {0.80f, 0.45f, 0.20f, 0.65f, true},
+        
+        // Caso 6: Saudável (G alto)
+        {0.30f, 0.70f, 0.50f, 0.85f, false},
+        
+        // Caso 7: Infectada (ambos índices abaixo)
+        {0.60f, 0.30f, 0.35f, 0.55f, true},
+        
+        // Caso 8: Saudável (GNDVI limítrofe)
+        {0.40f, 0.58f, 0.35f, 1.0f, false},
+        
+        // Caso 9: Infectada (sintomas visíveis)
+        {0.72f, 0.50f, 0.40f, 0.58f, true},
+        
+        // Caso 10: Saudável (NIR alto)
+        {0.35f, 0.50f, 0.40f, 1.0f, false}
+    };
+
+    for(int i = 0; i < 10; i++) {
+        // Extrai parâmetros do teste
+        float R = testes[i][0];
+        float G = testes[i][1];
+        float B = testes[i][2];
+        float NIR = testes[i][3];
+        bool esperado = testes[i][4];
+
+        // Executa detecção
+        bool resultado = detectar_doenca(R, G, B, NIR);
+        
+        // Calcula índices para exibição
+        float ndvi = (NIR - R) / (NIR + R + 0.001f);
+        float gndvi = (NIR - G) / (NIR + G + 0.001f);
+
+        // Exibe resultado detalhado
+        exibir_resultado_analise(
+            resultado,
+            R, G, B, NIR,
+            ndvi, gndvi
+        );
+
+        // Feedback simples pelo serial
+        printf("Teste %d: %s (%s)\n", 
+              i+1, 
+              resultado == esperado ? "OK" : "FALHA",
+              resultado ? "Infectada" : "Saudavel");
+    }
+}
